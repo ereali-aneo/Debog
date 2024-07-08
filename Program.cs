@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using ArmoniK.Debogage;
 using ArmoniK.Api.Common.Channel.Utils;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,11 +22,33 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Configuration;
+using Google.Protobuf.WellKnownTypes;
+using Serilog;
+using Serilog.Core;
+using Serilog.Formatting.Compact;
 
 
+public record Result
+{
+    public DateTime CreateAt { get; set; }
+    public string Name { get; set; }
+    public ResultStatus Status { get; init; }
+    public string SessionId { get; set; }
+    public string ResultId { get; set; }
+    public byte[]? Data { get; set; }
+}
+public record TaskData
+{
+    public ICollection<string> DataDependencies { get; set; }
+    public ICollection<string> ExpectedOutputKeys { get; set; }
+    public string PayloadId { get; set; }
+    public string TaskId { get; set; }
+}
 internal class AgentStorage
 {
     public readonly HashSet<string> _notifiedResults = new();
+    public  ConcurrentDictionary<string, Result> _Results = new();
+    public  ConcurrentDictionary<string, TaskData> _Tasks = new();
 }
 
 internal class MyAgent : Agent.AgentBase
@@ -39,18 +62,90 @@ internal class MyAgent : Agent.AgentBase
 
     public override Task<CreateResultsResponse> CreateResults(CreateResultsRequest request, ServerCallContext context)
     {
-        return base.CreateResults(request, context);
+        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.WriteLine("[INFO] Entered in CreateResults");
+        Console.ResetColor();
+
+        var results = request.Results.Select(rc =>
+        {
+            var resultId = Guid.NewGuid().ToString();
+            var current = new Result
+            {
+                ResultId = resultId,
+                Name = rc.Name,
+                Status = ResultStatus.Created,
+                CreateAt = DateTime.UtcNow,
+                SessionId = request.SessionId,
+                Data = rc.Data.ToByteArray(),
+            };
+            _storage._Results[resultId] = current;
+            return current;
+        });
+
+        return Task.FromResult(new CreateResultsResponse
+        {
+            CommunicationToken = request.CommunicationToken,
+            Results =
+            {
+                results.Select(result => new ResultMetaData
+                {
+                    CreatedAt = Timestamp.FromDateTime(result.CreateAt),
+                    Name = result.Name,
+                    SessionId = result.SessionId,
+                    Status = result.Status,
+                    ResultId = result.ResultId,
+                })
+            }
+        });
     }
 
     public override Task<CreateResultsMetaDataResponse> CreateResultsMetaData(CreateResultsMetaDataRequest request,
         ServerCallContext context)
     {
-        return base.CreateResultsMetaData(request, context);
+        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.WriteLine("[INFO] Entered in CreateResultsMetaData");
+        Console.ResetColor();
+
+
+        var results = request.Results.Select(rc =>
+        {
+            var resultId = Guid.NewGuid().ToString();
+
+            return new Result
+            {
+                ResultId = resultId,
+                Name = rc.Name,
+                Status = ResultStatus.Created,
+                CreateAt = DateTime.UtcNow,
+                SessionId = request.SessionId,
+                Data = null,
+            };
+        });
+
+        return Task.FromResult(new CreateResultsMetaDataResponse
+        {
+            CommunicationToken = request.CommunicationToken,
+            Results =
+            {
+                results.Select(result => new ResultMetaData
+                {
+                    CreatedAt = Timestamp.FromDateTime(result.CreateAt),
+                    Name = result.Name,
+                    SessionId = result.SessionId,
+                    Status = result.Status,
+                    ResultId = result.ResultId,
+                })
+            }
+        });
     }
+
 
     public override Task<NotifyResultDataResponse> NotifyResultData(NotifyResultDataRequest request,
         ServerCallContext context)
     {
+        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.WriteLine("[INFO] Entered in NotifyResultData");
+        Console.ResetColor();
         foreach (var result in request.Ids)
         {
             _storage._notifiedResults.Add(result.ResultId);
@@ -67,7 +162,43 @@ internal class MyAgent : Agent.AgentBase
 
     public override Task<SubmitTasksResponse> SubmitTasks(SubmitTasksRequest request, ServerCallContext context)
     {
-        return base.SubmitTasks(request, context);
+        Console.ForegroundColor = ConsoleColor.Blue;
+        Console.WriteLine("[INFO] Entered in SubmitTasks");
+        Console.ResetColor();
+
+        var createdTasks = request.TaskCreations.Select(rc =>
+        {
+            var taskId = Guid.NewGuid().ToString();
+            var current = new TaskData
+            {
+                DataDependencies = rc.DataDependencies,
+                ExpectedOutputKeys = rc.ExpectedOutputKeys,
+                PayloadId = rc.PayloadId,
+                TaskId = taskId,
+            };
+            _storage._Tasks[taskId] = current;
+            return current;
+        });
+        return Task.FromResult(new SubmitTasksResponse
+        {
+            CommunicationToken = request.CommunicationToken,
+            TaskInfos =
+            {
+                createdTasks.Select(creationRequest => new SubmitTasksResponse.Types.TaskInfo
+                {
+                    DataDependencies =
+                    {
+                        creationRequest.DataDependencies,
+                    },
+                    ExpectedOutputIds =
+                    {
+                        creationRequest.ExpectedOutputKeys,
+                    },
+                    PayloadId = creationRequest.PayloadId,
+                    TaskId    = creationRequest.TaskId,
+                }),
+            },
+        });
     }
 }
 
@@ -76,7 +207,7 @@ internal class Server : IDisposable
     private readonly Task _runningApp;
     private readonly WebApplication _app;
 
-    public Server(string socket, AgentStorage storage)
+    public Server(string socket, AgentStorage storage, Logger loggerConfiguration)
     {
         var builder = WebApplication.CreateBuilder();
 
@@ -91,8 +222,9 @@ internal class Server : IDisposable
                 listenOptions.Protocols = HttpProtocols.Http2;
             }));
 
+        builder.Host.UseSerilog(loggerConfiguration);
+
         builder.Services
-            .AddLogging()
             .AddSingleton(storage)
             .AddGrpcReflection()
             .AddGrpc(options => options.MaxReceiveMessageSize = null);
@@ -104,6 +236,7 @@ internal class Server : IDisposable
             _app.UseDeveloperExceptionPage();
             _app.MapGrpcReflectionService();
         }
+
         _app.UseRouting();
         _app.MapGrpcService<MyAgent>();
         _runningApp = _app.RunAsync();
@@ -117,22 +250,26 @@ internal class Server : IDisposable
 }
 
 
-/// POur tester use HelloWorld
 /// afficher appel a l'agent
-/// mon programme ne check pas les subtask pour le moment 
 /// j'envoie du bullshit en argument pour le moment
 /// je ne fait rien de mon resultat pour le moment
-/// j'ai 2 channel afin que le worker et l'agent soit clients et server
 /// mes signaux ne sont pas bloquant
 ///  lire \\wsl.localhost\Ubuntu-22.04\home\lara\ArmoniK.Core\Common\tests\Pollster\AgentTest.cs
-
 internal static class Program
 {
     public static void Main(string[] arg)
     {
-        Console.WriteLine("Hello, World!");
+        var loggerConfiguration_ = new LoggerConfiguration()
+            .WriteTo.Console()
+            .Enrich.FromLogContext()
+            .CreateLogger();
+
+        var logger_ = LoggerFactory.Create(builder => builder.AddSerilog(loggerConfiguration_))
+            .CreateLogger("root");
+
         /// channel as a client to my worker 
-        var channel = new GrpcChannelProvider(new GrpcChannel{Address = "/tmp/worker.sock"}, new NullLogger<GrpcChannelProvider>()).Get();
+        var channel = new GrpcChannelProvider(new GrpcChannel { Address = "/tmp/worker.sock" },
+            new NullLogger<GrpcChannelProvider>()).Get();
         var client = new Worker.WorkerClient(channel);
 
         var payloadId = Guid.NewGuid()
@@ -151,21 +288,22 @@ internal static class Program
             .ToString();
 
         var Dir = Directory.CreateTempSubdirectory().FullName;
-        var payloadBytes = Encoding.ASCII.GetBytes("Hello");
+        var payloadBytes = BitConverter.GetBytes(8);
+        //var payloadBytes = Encoding.ASCII.GetBytes("Hello");
         var dd1Bytes = Encoding.ASCII.GetBytes("DataDependency1");
 
 
         File.WriteAllBytesAsync(Path.Combine(Dir,
                 payloadId),
             payloadBytes);
-         File.WriteAllBytesAsync(Path.Combine(Dir,
+        File.WriteAllBytesAsync(Path.Combine(Dir,
                 dd1),
             dd1Bytes);
 
 
         var storage = new AgentStorage();
         {
-            using var server = new Server("/tmp/agent.sock", storage);
+            using var server = new Server("/tmp/agent.sock", storage, loggerConfiguration_);
 
             var taskOptions = new TaskOptions();
             taskOptions.Options["UseCase"] = "Launch";
@@ -194,9 +332,18 @@ internal static class Program
             });
         }
 
-        Console.WriteLine(storage._notifiedResults);
+        logger_.LogInformation("resultsIds : {results}", storage._notifiedResults);
+        logger_.LogInformation("results : {results}", storage._Results);
+                foreach (var result in storage._Results)
+        {
+            var str = Encoding.ASCII.GetString(result.Value.Data);
+            logger_.LogInformation("Result Data : ", str);
+        }
+        logger_.LogInformation("Tasks Data : {results}", storage._Tasks);
 
+        //Console.WriteLine(storage._Results.Select(i => i.ResultId));
 
+        var i = 0;
         foreach (var result in storage._notifiedResults)
         {
             var stringArray = Encoding.ASCII.GetString(File.ReadAllBytes(Path.Combine(Dir,
@@ -208,17 +355,14 @@ internal static class Program
                     StringSplitOptions.RemoveEmptyEntries);
             foreach (var res in stringArray)
             {
-
-                Console.WriteLine(res);
+                logger_.LogInformation("result{i}: {res}", i, res);
             }
-            Console.WriteLine($"{result}");
-        }
-        //foreach (var result in storage._notifiedResults)
-        //{
 
-        //    Console.WriteLine(Encoding.ASCII.GetString(File.ReadAllBytes(Path.Combine(Dir,
-        //            result))));
-        //}
+            logger_.LogInformation("resultId{i}: {res}", i, result);
+            i++;
+        }
+
+
     }
     //WorkerServer.Create<>() // faux car utilise celui deja creer 
 }
@@ -270,7 +414,7 @@ internal static class Program
      var dd1Bytes = Encoding.ASCII.GetBytes("DataDependency1");
      var eok1Bytes = Encoding.ASCII.GetBytes("ExpectedOutput1");
 
-  
+
      var handler = new TaskHandler(new ProcessRequest
      {
          CommunicationToken = token,
