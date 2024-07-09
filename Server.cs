@@ -16,12 +16,13 @@ namespace Task.ReRunner.Server
         private readonly System.Threading.Tasks.Task _runningApp;
         private readonly WebApplication _app;
 
+
         /// <summary>
-        /// 
+        /// Initializes a new instance of the Server class, configuring the server to listen on a Unix socket, set up logging, and add gRPC services.
         /// </summary>
-        /// <param name="socket"></param>
-        /// <param name="storage"></param>
-        /// <param name="loggerConfiguration"></param>
+        /// <param name="socket">The Unix socket path for the server to listen on.</param>
+        /// <param name="storage">The AgentStorage instance to store agent data.</param>
+        /// <param name="loggerConfiguration">The Serilog logger configuration for logging.</param>
         public Server(string socket, AgentStorage storage, Logger loggerConfiguration)
         {
             var builder = WebApplication.CreateBuilder();

@@ -27,9 +27,9 @@ namespace ArmoniK.Task.ReRunner.MyAgent
         private readonly AgentStorage _storage;
 
         /// <summary>
-        /// 
+        /// Initializes a new instance of the MyAgent class with the specified storage.
         /// </summary>
-        /// <param name="storage"></param>
+        /// <param name="storage">An instance of AgentStorage used to store agent data.</param>
         public MyAgent(AgentStorage storage)
         {
             _storage = storage;

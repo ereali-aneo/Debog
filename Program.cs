@@ -35,9 +35,9 @@ using Task.ReRunner.Server;
 internal static class Program
 {
     /// <summary>
-    /// 
+    /// Connect to a Worker to process tasks with specific process parameter.
     /// </summary>
-    /// <param name="arg"></param>
+    /// <param name="arg">Command-line arguments.</param>
     public static void Main(string[] arg)
     {
         // Create a logger configuration to write output to the console with contextual information.
