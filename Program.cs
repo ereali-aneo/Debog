@@ -15,6 +15,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Threading;
 using ArmoniK.Api.gRPC.V1.Agent;
+using Google.Protobuf.Collections;
 using Grpc.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -23,9 +24,28 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Configuration;
 using Google.Protobuf.WellKnownTypes;
+using Grpc.AspNetCore.Server;
 using Serilog;
 using Serilog.Core;
 using Serilog.Formatting.Compact;
+
+
+/// <summary>
+/// Represents all the parameters needed to launch a process : communication token, payload and session IDs, configuration settings, data dependencies, folder location, expected output keys, task ID, and task options.
+/// </summary>
+public record ProcessData
+{
+    public string CommunicationToken { get; init; }
+    public string PayloadId { get; init; }
+    public string SessionId { get; init; }
+    public Configuration Configuration { get; init; }
+    public ICollection<string> DataDependencies { get; init; }
+    public string DataFolder { get; init; }
+    public ICollection<string> ExpectedOutputKeys { get; init; }
+    public string TaskId { get; init; }
+    public TaskOptions TaskOptions { get; init; }
+}
+
 
 /// <summary>
 /// Represents a result with its creation date, name, status, session ID, result ID, and optional data.
@@ -57,8 +77,8 @@ public record TaskData
 internal class AgentStorage
 {
     public readonly HashSet<string> _notifiedResults = new();
-    public  ConcurrentDictionary<string, Result> _Results = new();
-    public  ConcurrentDictionary<string, TaskData> _Tasks = new();
+    public ConcurrentDictionary<string, Result> _Results = new();
+    public ConcurrentDictionary<string, TaskData> _Tasks = new();
 }
 
 internal class MyAgent : Agent.AgentBase
@@ -235,7 +255,7 @@ internal class MyAgent : Agent.AgentBase
                         creationRequest.ExpectedOutputKeys,
                     },
                     PayloadId = creationRequest.PayloadId,
-                    TaskId    = creationRequest.TaskId,
+                    TaskId = creationRequest.TaskId,
                 }),
             },
         });
@@ -298,12 +318,6 @@ internal class Server : IDisposable
     }
 }
 
-
-/// afficher appel a l'agent
-/// j'envoie du bullshit en argument pour le moment
-/// je ne fait rien de mon resultat pour le moment
-/// mes signaux ne sont pas bloquant
-///  lire \\wsl.localhost\Ubuntu-22.04\home\lara\ArmoniK.Core\Common\tests\Pollster\AgentTest.cs
 internal static class Program
 {
     /// <summary>
@@ -370,15 +384,34 @@ internal static class Program
             dd1Bytes);
         // Create an AgentStorage to keep the Agent Data After Process
         var storage = new AgentStorage();
-        
-        // Rerun a task scope
-        {
 
+
+        // Scope for the Task to run 
+        {
             using var server = new Server("/tmp/agent.sock", storage, loggerConfiguration_);
 
             // To test subtasking partition
             var taskOptions = new TaskOptions();
             taskOptions.Options["UseCase"] = "Launch";
+            var configuration = new Configuration
+            {
+                DataChunkMaxSize = 84,
+            };
+
+            // Register the parameters needed for processing : 
+            // communication token, payload and session IDs, configuration settings, data dependencies, folder location, expected output keys, task ID, and task options.
+            var toProcess = new ProcessData
+            {
+                CommunicationToken = token,
+                PayloadId = payloadId,
+                SessionId = sessionId,
+                Configuration = configuration,
+                DataDependencies = new RepeatedField<string> { dd1 },
+                DataFolder = folder,
+                ExpectedOutputKeys = new RepeatedField<string> { eok1 },
+                TaskId = taskId,
+                TaskOptions = taskOptions
+            };
 
             // Call the Process method on the gRPC client `client` of type Worker.WorkerClient
             client.Process(new ProcessRequest
@@ -386,10 +419,7 @@ internal static class Program
                 CommunicationToken = token,
                 PayloadId = payloadId,
                 SessionId = sessionId,
-                Configuration = new Configuration
-                {
-                    DataChunkMaxSize = 84,
-                },
+                Configuration = configuration,
                 DataDependencies =
                 {
                     dd1,
@@ -403,33 +433,30 @@ internal static class Program
                 TaskId = taskId,
                 TaskOptions = taskOptions
             });
+            logger_.LogInformation("First Task Data: {toProcess}", toProcess);
         }
 
         // print everything in agent storage
 
         logger_.LogInformation("resultsIds : {results}", storage._notifiedResults);
+
+        var i = 0;
         foreach (var result in storage._notifiedResults)
         {
             var str = File.ReadAllBytes(Path.Combine(folder,
                 result));
-            logger_.LogInformation("Notify Result Data : {str}", str);
+            logger_.LogInformation("Notified result Data : {str}", str);
+            logger_.LogInformation("Notified result Id{i}: {res}", i, result);
+            i++;
         }
+
         logger_.LogInformation("results : {results}", storage._Results);
         foreach (var result in storage._Results)
         {
             var str = result.Value.Data;
             logger_.LogInformation("Create Result Data : {str}", str);
         }
-        logger_.LogInformation("Tasks Data : {results}", storage._Tasks);
 
-        var i = 0;
-        foreach (var result in storage._notifiedResults)
-        {
-            var byteArray = File.ReadAllBytes(Path.Combine(folder,
-                result));
-            logger_.LogInformation("result{i}: {res}", i, byteArray);
-            logger_.LogInformation("resultId{i}: {res}", i, result);
-            i++;
-        }
+        logger_.LogInformation("Submitted Tasks Data : {results}", storage._Tasks);
     }
 }
