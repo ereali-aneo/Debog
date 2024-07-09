@@ -27,16 +27,22 @@ using Serilog;
 using Serilog.Core;
 using Serilog.Formatting.Compact;
 
-
+/// <summary>
+/// Represents a result with its creation date, name, status, session ID, result ID, and optional data.
+/// </summary>
 public record Result
 {
-    public DateTime CreateAt { get; set; }
+    public DateTime CreatedAt { get; set; }
     public string Name { get; set; }
     public ResultStatus Status { get; init; }
     public string SessionId { get; set; }
     public string ResultId { get; set; }
     public byte[]? Data { get; set; }
 }
+
+/// <summary>
+/// Represents task data, including its data dependencies, expected output keys, payload ID, and task ID.
+/// </summary>
 public record TaskData
 {
     public ICollection<string> DataDependencies { get; set; }
@@ -44,6 +50,10 @@ public record TaskData
     public string PayloadId { get; set; }
     public string TaskId { get; set; }
 }
+
+/// <summary>
+/// A storage class to keep Tasks and Result data.
+/// </summary>
 internal class AgentStorage
 {
     public readonly HashSet<string> _notifiedResults = new();
@@ -55,11 +65,22 @@ internal class MyAgent : Agent.AgentBase
 {
     private readonly AgentStorage _storage;
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="storage"></param>
     public MyAgent(AgentStorage storage)
     {
         _storage = storage;
     }
 
+    /// <summary>
+    /// Creates a Result with its MetaData: generates a result ID, retrieves its name, sets its status to created, adds the creation date, and retrieves the session ID.
+    /// Registers the created result and its data in Results.
+    /// </summary>
+    /// <param name="request">Data related to the CreateResults request</param>
+    /// <param name="context">Data related to the server</param>
+    /// <returns>A response containing the created Result</returns>
     public override Task<CreateResultsResponse> CreateResults(CreateResultsRequest request, ServerCallContext context)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
@@ -74,7 +95,7 @@ internal class MyAgent : Agent.AgentBase
                 ResultId = resultId,
                 Name = rc.Name,
                 Status = ResultStatus.Created,
-                CreateAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 SessionId = request.SessionId,
                 Data = rc.Data.ToByteArray(),
             };
@@ -89,7 +110,7 @@ internal class MyAgent : Agent.AgentBase
             {
                 results.Select(result => new ResultMetaData
                 {
-                    CreatedAt = Timestamp.FromDateTime(result.CreateAt),
+                    CreatedAt = Timestamp.FromDateTime(result.CreatedAt),
                     Name = result.Name,
                     SessionId = result.SessionId,
                     Status = result.Status,
@@ -99,6 +120,13 @@ internal class MyAgent : Agent.AgentBase
         });
     }
 
+    /// <summary>
+    /// Creates Result MetaData: generates a result ID, retrieves its name, sets its status to created, adds the creation date, and retrieves the session ID.
+    /// Registers the created result metadata without any data in Results.
+    /// </summary>
+    /// <param name="request">Data related to CreateResultsMetaData the request</param>
+    /// <param name="context">Data related to the server</param>
+    /// <returns>A response containing the created Result MetaData</returns>
     public override Task<CreateResultsMetaDataResponse> CreateResultsMetaData(CreateResultsMetaDataRequest request,
         ServerCallContext context)
     {
@@ -116,7 +144,7 @@ internal class MyAgent : Agent.AgentBase
                 ResultId = resultId,
                 Name = rc.Name,
                 Status = ResultStatus.Created,
-                CreateAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow,
                 SessionId = request.SessionId,
                 Data = null,
             };
@@ -129,7 +157,7 @@ internal class MyAgent : Agent.AgentBase
             {
                 results.Select(result => new ResultMetaData
                 {
-                    CreatedAt = Timestamp.FromDateTime(result.CreateAt),
+                    CreatedAt = Timestamp.FromDateTime(result.CreatedAt),
                     Name = result.Name,
                     SessionId = result.SessionId,
                     Status = result.Status,
@@ -139,7 +167,12 @@ internal class MyAgent : Agent.AgentBase
         });
     }
 
-
+    /// <summary>
+    /// Notifies result data: adds result IDs from the request to the notified results list in storage.
+    /// </summary>
+    /// <param name="request">Data related to the NotifyResultData request</param>
+    /// <param name="context">Data related to the server</param>
+    /// <returns>A response containing the notified result IDs</returns>
     public override Task<NotifyResultDataResponse> NotifyResultData(NotifyResultDataRequest request,
         ServerCallContext context)
     {
@@ -160,6 +193,13 @@ internal class MyAgent : Agent.AgentBase
         });
     }
 
+    /// <summary>
+    /// Submits tasks: generates task IDs, retrieves their data dependencies, expected output keys, and payload IDs.
+    /// Registers the created tasks in Tasks.
+    /// </summary>
+    /// <param name="request">Data related to the  SubmitTasks request</param>
+    /// <param name="context">Data related to the server</param>
+    /// <returns>A response containing information about the submitted tasks</returns>
     public override Task<SubmitTasksResponse> SubmitTasks(SubmitTasksRequest request, ServerCallContext context)
     {
         Console.ForegroundColor = ConsoleColor.Blue;
@@ -207,6 +247,12 @@ internal class Server : IDisposable
     private readonly Task _runningApp;
     private readonly WebApplication _app;
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="socket"></param>
+    /// <param name="storage"></param>
+    /// <param name="loggerConfiguration"></param>
     public Server(string socket, AgentStorage storage, Logger loggerConfiguration)
     {
         var builder = WebApplication.CreateBuilder();
@@ -242,6 +288,9 @@ internal class Server : IDisposable
         _runningApp = _app.RunAsync();
     }
 
+    /// <summary>
+    /// Disposes resources used by the application, stopping the application and waiting for it to finish.
+    /// </summary>
     public void Dispose()
     {
         _app.StopAsync().Wait();
@@ -257,57 +306,81 @@ internal class Server : IDisposable
 ///  lire \\wsl.localhost\Ubuntu-22.04\home\lara\ArmoniK.Core\Common\tests\Pollster\AgentTest.cs
 internal static class Program
 {
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="arg"></param>
     public static void Main(string[] arg)
     {
+        // Create a logger configuration to write output to the console with contextual information.
         var loggerConfiguration_ = new LoggerConfiguration()
             .WriteTo.Console()
             .Enrich.FromLogContext()
             .CreateLogger();
 
+        // Create a logger using the configured logger settings
         var logger_ = LoggerFactory.Create(builder => builder.AddSerilog(loggerConfiguration_))
             .CreateLogger("root");
 
-        /// channel as a client to my worker 
+        // Set up the gRPC channel with the specified address and a null logger for the provider
         var channel = new GrpcChannelProvider(new GrpcChannel { Address = "/tmp/worker.sock" },
             new NullLogger<GrpcChannelProvider>()).Get();
+
+        // Create a gRPC client for the Worker service
         var client = new Worker.WorkerClient(channel);
 
-        var payloadId = Guid.NewGuid()
-            .ToString();
-        var taskId = Guid.NewGuid()
-            .ToString();
-        var token = Guid.NewGuid()
-            .ToString();
-        var sessionId = Guid.NewGuid()
-            .ToString();
-        var dd1 = Guid.NewGuid()
-            .ToString();
-        var eok1 = Guid.NewGuid()
-            .ToString();
-        var eok2 = Guid.NewGuid()
-            .ToString();
+        // Generate a unique identifier for the payload
+        var payloadId = Guid.NewGuid().ToString();
 
-        var Dir = Directory.CreateTempSubdirectory().FullName;
+        // Generate a unique identifier for the task
+        var taskId = Guid.NewGuid().ToString();
+
+        // Generate a unique identifier for the communication token
+        var token = Guid.NewGuid().ToString();
+
+        // Generate a unique identifier for the session
+        var sessionId = Guid.NewGuid().ToString();
+
+        // Generate a unique identifier for the first data dependency
+        var dd1 = Guid.NewGuid().ToString();
+
+        // Generate a unique identifier for the first expected output key
+        var eok1 = Guid.NewGuid().ToString();
+
+        // Generate a unique identifier for the second expected output key
+        var eok2 = Guid.NewGuid().ToString();
+
+        // Create a temporary directory and get its full path
+        var folder = Directory.CreateTempSubdirectory().FullName;
+
+        // Convert the integer 8 to a byte array for the payload
         var payloadBytes = BitConverter.GetBytes(8);
-        //var payloadBytes = Encoding.ASCII.GetBytes("Hello");
+
+        // Convert the string "DataDependency1" to a byte array using ASCII encoding
         var dd1Bytes = Encoding.ASCII.GetBytes("DataDependency1");
 
-
-        File.WriteAllBytesAsync(Path.Combine(Dir,
+        // Write payloadBytes in the corresponding file
+        File.WriteAllBytesAsync(Path.Combine(folder,
                 payloadId),
             payloadBytes);
-        File.WriteAllBytesAsync(Path.Combine(Dir,
+
+        // Write payloadBytes in the corresponding file
+        File.WriteAllBytesAsync(Path.Combine(folder,
                 dd1),
             dd1Bytes);
-
-
+        // Create an AgentStorage to keep the Agent Data After Process
         var storage = new AgentStorage();
+        
+        // Rerun a task scope
         {
+
             using var server = new Server("/tmp/agent.sock", storage, loggerConfiguration_);
 
+            // To test subtasking partition
             var taskOptions = new TaskOptions();
             taskOptions.Options["UseCase"] = "Launch";
 
+            // Call the Process method on the gRPC client `client` of type Worker.WorkerClient
             client.Process(new ProcessRequest
             {
                 CommunicationToken = token,
@@ -321,141 +394,42 @@ internal static class Program
                 {
                     dd1,
                 },
-                DataFolder = Dir,
+                DataFolder = folder,
                 ExpectedOutputKeys =
                 {
                     eok1,
-                    //eok2, // a commenter en fonction de multiple result 
+                    //eok2, // Uncomment to test multiple expected output keys (results)
                 },
                 TaskId = taskId,
                 TaskOptions = taskOptions
             });
         }
 
+        // print everything in agent storage
+
         logger_.LogInformation("resultsIds : {results}", storage._notifiedResults);
-        logger_.LogInformation("results : {results}", storage._Results);
-                foreach (var result in storage._Results)
+        foreach (var result in storage._notifiedResults)
         {
-            var str = Encoding.ASCII.GetString(result.Value.Data);
-            logger_.LogInformation("Result Data : ", str);
+            var str = File.ReadAllBytes(Path.Combine(folder,
+                result));
+            logger_.LogInformation("Notify Result Data : {str}", str);
+        }
+        logger_.LogInformation("results : {results}", storage._Results);
+        foreach (var result in storage._Results)
+        {
+            var str = result.Value.Data;
+            logger_.LogInformation("Create Result Data : {str}", str);
         }
         logger_.LogInformation("Tasks Data : {results}", storage._Tasks);
-
-        //Console.WriteLine(storage._Results.Select(i => i.ResultId));
 
         var i = 0;
         foreach (var result in storage._notifiedResults)
         {
-            var stringArray = Encoding.ASCII.GetString(File.ReadAllBytes(Path.Combine(Dir,
-                    result)))
-                .Split(new[]
-                    {
-                        '\n',
-                    },
-                    StringSplitOptions.RemoveEmptyEntries);
-            foreach (var res in stringArray)
-            {
-                logger_.LogInformation("result{i}: {res}", i, res);
-            }
-
+            var byteArray = File.ReadAllBytes(Path.Combine(folder,
+                result));
+            logger_.LogInformation("result{i}: {res}", i, byteArray);
             logger_.LogInformation("resultId{i}: {res}", i, result);
             i++;
         }
-
-
     }
-    //WorkerServer.Create<>() // faux car utilise celui deja creer 
 }
-// test agents tromper d'agent
-
-/*
-
-     private class MyAgent : Agent.AgentClient
-     {
-         private readonly MyClientStreamWriter<CreateTaskRequest> taskStream_ = new();
-
-
-         public override AsyncClientStreamingCall<CreateTaskRequest, CreateTaskReply> CreateTask(Metadata headers = null,
-             DateTime? deadline = null,
-             CancellationToken cancellationToken = default)
-             => new(taskStream_,
-                 Task.FromResult(new CreateTaskReply()),
-                 Task.FromResult(new Metadata()),
-                 () => Status.DefaultSuccess,
-                 () => new Metadata(),
-                 () =>
-                 {
-                 });
-
-     }
-     public async Task NewTaskHandlerShouldSucceed()
-     {
-         var agent = new MyAgent();
-
-     var payloadId = Guid.NewGuid()
-                         .ToString();
-     var taskId = Guid.NewGuid()
-                      .ToString();
-     var token = Guid.NewGuid()
-                     .ToString();
-     var sessionId = Guid.NewGuid()
-                         .ToString();
-     var dd1 = Guid.NewGuid()
-                   .ToString();
-     var eok1 = Guid.NewGuid()
-                    .ToString();
-
-     var folder = Path.Combine(Path.GetTempPath(),
-                               token);
-
-     Directory.CreateDirectory(folder);
-
-     var payloadBytes = Encoding.ASCII.GetBytes("payload");
-     var dd1Bytes = Encoding.ASCII.GetBytes("DataDependency1");
-     var eok1Bytes = Encoding.ASCII.GetBytes("ExpectedOutput1");
-
-
-     var handler = new TaskHandler(new ProcessRequest
-     {
-         CommunicationToken = token,
-         DataFolder = folder,
-         PayloadId = payloadId,
-         SessionId = sessionId,
-         Configuration = new Configuration
-         {
-             DataChunkMaxSize = 84,
-         },
-         DataDependencies =
-                                     {
-                                       dd1,
-                                     },
-         ExpectedOutputKeys =
-                                     {
-                                       eok1,
-                                     },
-         TaskId = taskId,
-     },
-                                   agent,
-                                   new LoggerFactory(),
-                                   CancellationToken.None);
-
-     Assert.ThrowsAsync<NotImplementedException>(() => handler.SendResult(eok1,
-                                                                          eok1Bytes));
-
-     Assert.Multiple(() =>
-                     {
-                       Assert.AreEqual(payloadBytes,
-                                       handler.Payload);
-                       Assert.AreEqual(sessionId,
-                                       handler.SessionId);
-                       Assert.AreEqual(taskId,
-                                       handler.TaskId);
-                       Assert.AreEqual(dd1Bytes,
-                                       handler.DataDependencies[dd1]);
-                       Assert.AreEqual(eok1Bytes,
-                                       File.ReadAllBytes(Path.Combine(folder,
-                                                                      eok1)));
-                     });
-   }
-
-*/
